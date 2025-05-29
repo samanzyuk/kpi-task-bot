@@ -1,16 +1,18 @@
 import os
-import logging
-import telegram
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 import openai
+from flask import Flask, request
+from telegram import Bot, Update
+from telegram.ext import Dispatcher, CommandHandler
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+bot = Bot(token=TOKEN)
+
+app = Flask(__name__)
 
 openai.api_key = OPENAI_KEY
 
-logging.basicConfig(level=logging.INFO)
-bot = telegram.Bot(token=TOKEN)
+tasks = []
 
 def start(update, context):
     update.message.reply_text(
@@ -21,27 +23,24 @@ def start(update, context):
         "Працюємо."
     )
 
-tasks = []
-
-def add_task(update, context):
-    task_text = ' '.join(context.args)
-    if task_text:
-        tasks.append(task_text)
-        update.message.reply_text(f"✅ Додано: {task_text}")
+def add(update, context):
+    text = ' '.join(context.args)
+    if text:
+        tasks.append(text)
+        update.message.reply_text(f"✅ Додано: {text}")
     else:
-        update.message.reply_text("❗ Введи текст завдання після команди /add")
+        update.message.reply_text("❗ Напиши завдання після /add")
 
-def list_tasks(update, context):
+def show_list(update, context):
     if tasks:
-        text = "\n".join([f"{i+1}. {task}" for i, task in enumerate(tasks)])
-        update.message.reply_text(f"📋 Завдання:\n{text}")
+        update.message.reply_text('\n'.join([f"{i+1}. {t}" for i, t in enumerate(tasks)]))
     else:
         update.message.reply_text("📭 Завдань поки немає.")
 
 def ai(update, context):
     prompt = update.message.text.replace('/ai', '').strip()
     if not prompt:
-        update.message.reply_text("Напиши запит після /ai")
+        update.message.reply_text("❗ Напиши запит після /ai")
         return
     try:
         response = openai.ChatCompletion.create(
@@ -51,19 +50,22 @@ def ai(update, context):
         answer = response['choices'][0]['message']['content']
         update.message.reply_text(answer)
     except Exception as e:
-        update.message.reply_text("❌ Помилка GPT. Перевір ключ.")
+        update.message.reply_text("❌ GPT помилка")
 
-def main():
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
-
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dp = Dispatcher(bot, None, workers=0)
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("add", add_task))
-    dp.add_handler(CommandHandler("list", list_tasks))
+    dp.add_handler(CommandHandler("add", add))
+    dp.add_handler(CommandHandler("list", show_list))
     dp.add_handler(CommandHandler("ai", ai))
+    dp.process_update(update)
+    return "ok"
 
-    updater.start_polling()
-    updater.idle()
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot is alive"
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
